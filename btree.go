@@ -11,7 +11,15 @@ const (
 	t = 512
 )
 
+// Comparable defines a total ordering of values of type T. Values within
+// BTree are constrained by Comparable to to indicate the order in which they
+// are stored.
 type Comparable[T any] interface {
+	// Compare is called on a value of type T, with another value of type T and
+	// indicates the relative order of the two values by returning an int.
+	// a.Compare(b) < 0 indicates that value a is less than value b,
+	// a.Compare(b) == 0 indicates that a and b match, finally a.Compare(b) > 0
+	// indicates that a is greater than b.
 	Compare(T) int
 }
 
@@ -23,10 +31,14 @@ func NewBTree[T Comparable[T]]() *BTree[T] {
 	return &BTree[T]{newRootLeafNode[T]()}
 }
 
+// Search searches the tree recursively for the value matching the key k if such
+// a value exists.
 func (b BTree[T]) Search(k T) (T, bool) {
 	return b.root.search(k)
 }
 
+// Insert inserts k into the tree or updates an existing value matching k if
+// such a value exists.
 func (b *BTree[T]) Insert(k T) {
 	if !b.root.isBelowMax() {
 		var (
@@ -70,7 +82,7 @@ func newBaseLeafNode[T Comparable[T]]() baseLeafNode[T] {
 	return baseLeafNode[T]{newList[T](2*t - 1)}
 }
 
-// Search searches  a leaf node just reports if the key is contained within its
+// search searches  a leaf node just reports if the key is contained within its
 // local list of keys.
 func (n baseLeafNode[T]) search(key T) (outkey T, found bool) {
 	i, found := find(n.keys, key)
@@ -161,7 +173,6 @@ func (n *baseInternalNode[T]) remove(k T) {
 		child.merge(n.keys.remove(i), n.children[i+1])
 		n.children.remove(i + 1)
 	} else if child.isAboveMin() {
-		// continue
 	} else if i > 0 && n.children[i-1].isAboveMin() {
 		stolen := n.keys.remove(i - 1)
 		n.keys.insert(i-1, child.shuffleRight(stolen, n.children[i-1]))
@@ -188,8 +199,8 @@ type childNode[T Comparable[T]] interface {
 	merge(T, childNode[T])          // Merges node with a sibling
 	deletePred() T                  // Deletes the last key in the subtree
 	deleteSucc() T                  // Deletes the first key in the subtree
-	shuffleLeft(T, childNode[T]) T  // Shuffles keys around, stealing from
-	shuffleRight(T, childNode[T]) T // Shuffles keys around, stealing from
+	shuffleLeft(T, childNode[T]) T  // Shuffles keys around, stealing from the right
+	shuffleRight(T, childNode[T]) T // Shuffles keys around, stealing from the left
 }
 
 // childLeafNode implements childNode interface, representing a leaf node which
@@ -227,14 +238,14 @@ func (n *childLeafNode[T]) merge(medianKey T, m childNode[T]) {
 	n.keys.splice(len(n.keys), 0, &sibling.keys)
 }
 
-// deletePred deletes the sucessor of some key key which is the first key
-// of the sub tree rooted at n.
+// deletePred deletes the sucessor of some key which is the first key of the
+// sub tree rooted at n.
 func (n *childLeafNode[T]) deletePred() T {
 	return n.keys.remove(len(n.keys) - 1)
 }
 
-// deleteSucc deletes the sucessor of some key key which is the first key
-// in the sub tree rooted at n.
+// deleteSucc deletes the sucessor of some key which is the first key in the
+// sub tree rooted at n.
 func (n *childLeafNode[T]) deleteSucc() T {
 	return n.keys.remove(0)
 }
@@ -251,6 +262,8 @@ func (n *childLeafNode[T]) shuffleRight(stolenKey T, m childNode[T]) T {
 	return sibling.keys.remove(len(sibling.keys) - 1)
 }
 
+// childLeafNode implements childNode interface, representing an internal node
+// which is not the root of the B-tree.
 type childInternalNode[T Comparable[T]] struct {
 	baseInternalNode[T]
 }
@@ -344,12 +357,15 @@ func (n *childInternalNode[T]) shuffleRight(stolenKey T, m childNode[T]) T {
 	return sibling.keys.remove(len(sibling.keys) - 1)
 }
 
+// rootNode represents the functionality of the root node of the tree
 type rootNode[T Comparable[T]] interface {
 	node[T]
 	shrink() rootNode[T]   // Shrinks the subtree when root node is empty
 	asChild() childNode[T] // Reconstructs the root node as a child node
 }
 
+// rootLeafNode implements rootNode interface, representing a leaf node which
+// is the root of the B-tree.
 type rootLeafNode[T Comparable[T]] struct {
 	baseLeafNode[T]
 }
@@ -370,6 +386,8 @@ func (n rootLeafNode[T]) asChild() childNode[T] {
 	return &childLeafNode[T]{n.baseLeafNode}
 }
 
+// rootInternalNode implements rootNode interface, representing an internal
+// node which is root of the B-tree.
 type rootInternalNode[T Comparable[T]] struct {
 	baseInternalNode[T]
 }
