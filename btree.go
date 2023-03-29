@@ -46,6 +46,34 @@ func (b *BTree[T]) Insert(k T) {
 			newRoot = newRootInternalNode[T]()
 		)
 
+		// New values are always placed inside a leaf node. The insert operation
+		// recurses down tree in a single pass, searching for the appropriate
+		// position in the appropriate leaf node in which to place the value.
+		// To guarantee that there is always enough space to place new values;
+		// that recursion never descends into a full node; such nodes are split
+		// about their median key as they are encountered.
+		//
+		// Here, the root node of a B-Tree with t = 4 becomes the first child of
+		// a new node created from the the median key H, increasing the height
+		// of the tree by 1:
+		//
+		// root
+		// (A D F  H L N P)
+		// ↓ ↓ ↓ ↓  ↓ ↓ ↓ ↓
+		// T₁T₂T₃T₄ T₁T₂T₃T₄
+		//
+		// The root node originally has and 7 keys (2t-1) and 8 (2t) children.
+		// Splitting results in the creation of a new node node which becomes
+		// the immediate right sibling of what is now the former root. The two
+		// siblings each now have 3 (t-1) keys and 4 (t) children:
+		//
+		//       newRoot
+		//       (H)
+		//       ↓ ↓
+		// root     sibling
+		// (A D F)  (L N P)
+		// ↓ ↓ ↓ ↓  ↓ ↓ ↓ ↓
+		// T₁T₂T₃T₄ T₁T₂T₃T₄
 		medianKey, sibling := root.split()
 		newRoot.keys.insert(0, medianKey)
 		newRoot.children.insert(0, root)
@@ -58,8 +86,41 @@ func (b *BTree[T]) Insert(k T) {
 // Remove removes the value matching k from the the tree if such a value exists,
 // but regardless may still result in the tree shrinking.
 func (b *BTree[T]) Remove(k T) {
+	// Like with insertion, removal recurses down the tree in a single pass,
+	// rearranging the tree as it goes to maintain its invariants. Unlike
+	// insertion, keys can be removed from leaf nodes or internal nodes. Now,
+	// care must be taken to ensure that recursion doesn't descend into a node
+	// that is too small, rather than one that is too big. This is done by
+	// shuffling spare keys between siblings, or merging siblings if necessary.
 	b.root.remove(k)
 	if !b.root.isAboveMin() {
+		// Further, in contrast to the case of insertion into a B-Tree rooted at
+		// a full node, where the height of tree increases by 1; removal from a
+		// B-Tree may result in an empty internal root node, in which case the
+		// first child of the root becomes the new root of the tree.
+		//
+		// Here, D is removed from a tree with t = 3. The first child of the
+		// root becomes the new root of the tree, decreasing the height of the
+		// tree by 1.
+		//
+		//                     root
+		//                     (P)
+		//                    ↓  ↓
+		//     first child             second child
+		//     (C        L)            (T     X)
+		//     ↓     ↓    ↓            ↓   ↓   ↓
+		// (A B) (D E J K) (N 0) (Q R S) (U V) (Y Z)
+		//
+		// Both children of the root node each with 2 (t-1) keys and 3 (t)
+		// children, are too small for recursion to continue. The siblings are
+		// merged about P, which which moves down from the root to become the
+		// median key of the merged node with 5 (2t -1) keys and 6 (t) children,
+		// which becomes new root of the tree.
+		//
+		//     new root
+		//     (C       L     P       T     X)
+		//     ↓    ↓      ↓      ↓      ↓   ↓
+		// (A B) (E J K) (N 0) (Q R S) (U V) (Y Z)
 		b.root = b.root.shrink()
 	}
 }
@@ -173,13 +234,41 @@ func (n *baseInternalNode[T]) remove(k T) {
 		child.merge(n.keys.remove(i), n.children[i+1])
 		n.children.remove(i + 1)
 	} else if child.isAboveMin() {
+		// in this case child child is not too small to remove a key from
+		// so continue recursion downwards
 	} else if i > 0 && n.children[i-1].isAboveMin() {
+		// here, child neads to steal a key from one of it's immediate siblings
+		//
+		//     new root:
+		//     (C       L     P       T     X)
+		//     ↓    ↓      ↓      ↓      ↓   ↓
+		// (A B) (E J K) (N O) (Q R S) (U V) (Y Z)
+		//
+		//     new root:
+		//     (E       L     P       T     X)
+		//     ↓    ↓      ↓      ↓      ↓   ↓
+		// (A C) (  J K) (N O) (Q R S) (U V) (Y Z)
 		stolen := n.keys.remove(i - 1)
 		n.keys.insert(i-1, child.shuffleRight(stolen, n.children[i-1]))
 	} else if i < len(n.keys) && n.children[i+1].isAboveMin() {
 		stolenKey := n.keys.remove(i)
 		n.keys.insert(i, child.shuffleLeft(stolenKey, n.children[i+1]))
 	} else if i > 0 {
+		//                        n
+		//                        (P)
+		//                        ↓ ↓
+		//     n.children[i-1]      child
+		//     (C            L)     (T X)
+		//     ↓      ↓       ↓
+		// (A B) (D  E  J  K) (N O) …
+		//
+		// P moves down from the root and becomes the median key between cl and tx:
+		// merge the root node and continue recursion
+		//
+		//     n.children[i-1]
+		//     (C              L    P T   X)
+		//     ↓       ↓         ↓
+		// (A B) (✗   E  J K )  (N O)  …
 		n.children[i-1].merge(n.keys.remove(i-1), child)
 		n.children.remove(i)
 		child = n.children[i-1]
